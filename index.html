@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>活动协同看板与地图</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 引入高德地图 JS API -->
+    <script src="https://webapi.amap.com/maps?v=2.0&key=你的高德地图WebAPI密钥"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+    <div id="app" class="max-w-md mx-auto min-h-screen flex flex-col bg-white shadow-xl relative">
+        
+        <!-- 顶部导航栏 -->
+        <header class="bg-blue-600 text-white px-4 py-3 flex justify-between items-center sticky top-0 z-50">
+            <h1 class="text-base font-bold flex items-center gap-1.5">
+                <i class="fa-solid fa-map-location-dot"></i> 探店活动看板
+            </h1>
+            <div class="flex gap-1.5 items-center">
+                <button @click="openAddModal" class="bg-emerald-500 hover:bg-emerald-600 text-white px-2.5 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 shadow-sm">
+                    <i class="fa-solid fa-plus"></i> 添加
+                </button>
+                <button @click="currentView = 'list'" :class="currentView === 'list' ? 'bg-blue-700 font-bold' : 'bg-blue-500'" class="px-2.5 py-1.5 rounded text-xs transition">
+                    <i class="fa-solid fa-list"></i> 列表
+                </button>
+                <button @click="currentView = 'map'; initMap()" :class="currentView === 'map' ? 'bg-blue-700 font-bold' : 'bg-blue-500'" class="px-2.5 py-1.5 rounded text-xs transition">
+                    <i class="fa-solid fa-map"></i> 地图
+                </button>
+            </div>
+        </header>
+
+        <!-- 主体内容区域 -->
+        <main class="flex-1 pb-20 overflow-y-auto">
+            
+            <!-- 视图 1：活动列表 -->
+            <div v-if="currentView === 'list'" class="p-4 space-y-3">
+                <!-- 搜索与多维筛选 -->
+                <div class="space-y-2 bg-gray-50 p-2.5 rounded-xl border relative">
+                    <!-- 一键还原：仅保留图标 -->
+                    <button @click="resetFilters" class="absolute top-2.5 right-2.5 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 p-1.5 rounded transition" title="一键还原">
+                        <i class="fa-solid fa-rotate-left"></i>
+                    </button>
+
+                    <div class="flex gap-2 pr-10">
+                        <input v-model="searchQuery" type="text" placeholder="搜索活动名称/内容..." class="flex-1 border rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-blue-500">
+                        <select v-model="sortOrder" class="border rounded-lg px-2 py-1.5 text-xs bg-white font-medium text-blue-600">
+                            <option value="asc">📅 截止：新 → 旧</option>
+                            <option value="desc">📅 截止：旧 → 新</option>
+                            <option value="rec">🌟 推荐排序</option>
+                        </select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-2">
+                        <select v-model="selectedCategory" class="border rounded-lg px-2 py-1.5 text-xs bg-white">
+                            <option value="">全部板块</option>
+                            <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                        </select>
+                        <select v-model="selectedAccount" class="border rounded-lg px-2 py-1.5 text-xs bg-white">
+                            <option value="">全部账号</option>
+                            <option value="少奶奶">少奶奶</option>
+                            <option value="艳娘">艳娘</option>
+                            <option value="小十一">小十一</option>
+                            <option value="多人">多人</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2">
+                        <select v-model="selectedContentType" class="border rounded-lg px-2 py-1.5 text-xs bg-white">
+                            <option value="">全部属性</option>
+                            <option value="笔记">笔记</option>
+                            <option value="免费试">免费试</option>
+                            <option value="免费菜">免费菜</option>
+                            <option value="其他">其他</option>
+                        </select>
+                        <select v-model="selectedTimeTag" class="border rounded-lg px-2 py-1.5 text-xs bg-white">
+                            <option value="">全部日期</option>
+                            <option value="周六可用">周六可用</option>
+                            <option value="周日可用">周日可用</option>
+                            <option value="工作日可用">工作日可用</option>
+                        </select>
+                        <select v-model="selectedStatus" class="border rounded-lg px-2 py-1.5 text-xs bg-white font-medium text-purple-600">
+                            <option value="">全部状态</option>
+                            <option value="uncompleted">未体验</option>
+                            <option value="completed">已体验</option>
+                            <option value="booked">已预约</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 统计提示 -->
+                <div class="text-[11px] text-gray-500 flex justify-between items-center px-1">
+                    <span>符合条件：<strong>{{ sortedActivities.length }}</strong> 个活动</span>
+                    <span class="text-emerald-600 font-medium">✨ 已体验活动自动沉底</span>
+                </div>
+
+                <!-- 活动卡片列表 -->
+                <div v-if="sortedActivities.length > 0" class="space-y-3">
+                    <div v-for="item in sortedActivities" :key="item.id" 
+                         :class="item.completed ? 'bg-gray-100 opacity-60 border-l-4 border-gray-400' : 'bg-white border-l-4 shadow-sm'"
+                         class="border rounded-xl p-3.5 relative transition" 
+                         :style="item.completed ? {} : { borderLeftColor: getCategoryColor(item.category) }">
+                        
+                        <div class="flex justify-between items-start mb-1.5">
+                            <div>
+                                <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full text-white font-medium" :style="{ backgroundColor: getCategoryColor(item.category) }">
+                                        {{ item.category }}
+                                    </span>
+                                    <span class="text-xs text-red-600 font-bold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
+                                        截止: {{ item.deadline }}
+                                    </span>
+                                    <span v-if="item.bookingTime" class="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
+                                        <i class="fa-regular fa-calendar-check"></i> {{ item.bookingTime }}
+                                    </span>
+                                    <span v-if="item.completed" class="text-[10px] bg-gray-600 text-white px-1.5 py-0.5 rounded font-bold">已体验</span>
+                                </div>
+                                <h3 :class="item.completed ? 'line-through text-gray-500' : 'text-gray-900'" class="text-base font-bold">{{ item.name }}</h3>
+                            </div>
+                            
+                            <!-- 独立删除按钮 -->
+                            <button @click="deleteActivity(item.id)" class="text-gray-300 hover:text-red-500 p-2 rounded transition" title="删除">
+                                <i class="fa-solid fa-trash-can text-sm"></i>
+                            </button>
+                        </div>
+                        
+                        <!-- 极简内容标签 -->
+                        <p class="text-xs font-medium text-gray-700 bg-gray-50 p-2 rounded mb-2 flex items-center gap-1.5">
+                            <i class="fa-solid fa-box-open text-gray-400"></i>
+                            <span>{{ item.content }}</span>
+                        </p>
+                        
+                        <!-- 极简注意事项图标提示 -->
+                        <div v-if="item.notice" class="bg-amber-50 text-amber-800 text-xs p-2 rounded mb-2 flex gap-1.5 items-start border border-amber-100">
+                            <i class="fa-solid fa-triangle-exclamation mt-0.5 text-amber-600 flex-shrink-0"></i>
+                            <div class="leading-relaxed">{{ item.notice }}</div>
+                        </div>
+
+                        <!-- 来源标签、编辑与跳转按钮 -->
+                        <div class="flex justify-between items-center text-[11px] text-gray-400 pt-2 border-t gap-2 flex-wrap">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-gray-400"><i class="fa-solid fa-feather"></i></span>
+                                <span v-for="acc in parseAccount(item.source)" :key="acc" class="bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                                    {{ acc }}
+                                </span>
+                                <span v-for="type in parseContentType(item.source)" :key="type" class="bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                                    {{ type }}
+                                </span>
+                            </div>
+
+                            <div class="flex items-center gap-1.5">
+                                <button @click="openBookingModal(item)" :class="item.bookingTime ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-600 border border-indigo-200'" class="px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1">
+                                    <i class="fa-regular fa-clock text-[10px]"></i> {{ item.bookingTime ? '改预约' : '预约' }}
+                                </button>
+                                <button @click="toggleCompleted(item)" :class="item.completed ? 'bg-gray-200 text-gray-700' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'" class="px-2 py-1 rounded text-xs font-medium transition">
+                                    {{ item.completed ? '撤销' : '✓ 体验' }}
+                                </button>
+                                <button @click="openEditModal(item)" class="bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-600 px-2 py-1 rounded text-xs font-medium transition flex items-center gap-1">
+                                    <i class="fa-solid fa-pen text-[10px]"></i> 编辑
+                                </button>
+                                <a v-if="item.link" :href="item.link" target="_blank" class="bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium hover:bg-blue-700 transition flex items-center gap-1 shadow-sm">
+                                    <span>跳转</span> <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div v-else class="text-center py-16 text-gray-400">
+                    <i class="fa-regular fa-folder-open text-4xl mb-2"></i>
+                    <p class="text-sm">没有找到匹配的活动</p>
+                </div>
+            </div>
+
+            <!-- 视图 2：活动地图 -->
+            <div v-show="currentView === 'map'" class="relative h-[calc(100vh-110px)] w-full">
+                <div id="amap-container" class="w-full h-full"></div>
+                <!-- 图例说明 -->
+                <div class="absolute top-3 left-3 bg-white/90 backdrop-blur p-2.5 rounded-lg shadow text-xs space-y-1.5 z-10 border">
+                    <div class="font-bold text-gray-700 mb-1">板块颜色图例：</div>
+                    <div v-for="(color, cat) in categoryColors" :key="cat" class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full shadow-sm" :style="{ backgroundColor: color }"></span>
+                        <span class="text-gray-600 font-medium">{{ cat }}</span>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- 添加/编辑活动弹窗 -->
+        <div v-if="showModal" class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+            <div class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-base font-bold">{{ isEditing ? '编辑活动' : '添加新活动' }}</h3>
+                    <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+
+                <form @submit.prevent="saveActivity" class="space-y-3 text-xs">
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">活动名称</label>
+                        <input v-model="form.name" required type="text" placeholder="例如：某某清吧体验" class="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-medium text-gray-700 mb-1">板块分类</label>
+                            <select v-model="form.category" required class="w-full border rounded-lg px-2 py-2 text-xs bg-white">
+                                <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block font-medium text-gray-700 mb-1">截止日期</label>
+                            <input v-model="form.deadline" required type="text" placeholder="例如：10/25" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">活动内容</label>
+                        <textarea v-model="form.content" required rows="2" placeholder="例如：2杯+小食" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500"></textarea>
+                    </div>
+
+                    <!-- 快捷标签填充区 -->
+                    <div>
+                        <label class="block font-medium text-gray-500 mb-1">💡 常用词一键点选：</label>
+                        <div class="flex gap-1 flex-wrap">
+                            <span @click="form.source = (form.source ? form.source + ' ' : '') + '少奶奶'" class="bg-gray-100 hover:bg-blue-50 hover:text-blue-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">少奶奶</span>
+                            <span @click="form.source = (form.source ? form.source + ' ' : '') + '艳娘'" class="bg-gray-100 hover:bg-blue-50 hover:text-blue-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">艳娘</span>
+                            <span @click="form.source = (form.source ? form.source + ' ' : '') + '小十一'" class="bg-gray-100 hover:bg-blue-50 hover:text-blue-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">小十一</span>
+                            <span @click="form.source = (form.source ? form.source + ' ' : '') + '笔记'" class="bg-gray-100 hover:bg-purple-50 hover:text-purple-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">笔记</span>
+                            <span @click="form.notice = (form.notice ? form.notice + ' ' : '') + '周六不可用'" class="bg-gray-100 hover:bg-amber-50 hover:text-amber-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">周六不可用</span>
+                            <span @click="form.notice = (form.notice ? form.notice + ' ' : '') + '工作日不可用'" class="bg-gray-100 hover:bg-amber-50 hover:text-amber-600 px-2 py-0.5 rounded cursor-pointer border text-[10px]">工作日不可用</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">注意事项与时间限制</label>
+                        <input v-model="form.notice" type="text" placeholder="例如：周六不可用" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">来源</label>
+                        <input v-model="form.source" type="text" placeholder="例如：少奶奶 笔记" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">跳转链接</label>
+                        <input v-model="form.link" type="url" placeholder="例如：https://..." class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block font-medium text-gray-700 mb-1">位置名称</label>
+                        <input v-model="form.locationName" type="text" placeholder="例如：上海" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                    </div>
+
+                    <div class="pt-3 flex gap-2">
+                        <button type="button" @click="showModal = false" class="flex-1 bg-gray-100 text-gray-700 py-2.5 rounded-lg font-medium">取消</button>
+                        <button type="submit" class="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-medium">保存提交</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 预约时间弹窗 -->
+        <div v-if="showBookingModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div class="bg-white w-full max-w-sm rounded-2xl p-5 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-sm font-bold">设置预约时间 - {{ bookingTargetName }}</h3>
+                    <button @click="showBookingModal = false" class="text-gray-400 hover:text-gray-600">
+                        <i class="fa-solid fa-xmark text-base"></i>
+                    </button>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">预约具体时间</label>
+                    <input v-model="bookingInputVal" type="text" placeholder="例如：10月5日 下午2点 / 10/5 14:00" class="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" @click="clearBooking" class="bg-gray-100 text-red-600 px-3 py-2 rounded-lg text-xs font-medium">取消预约</button>
+                    <button type="button" @click="showBookingModal = false" class="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg text-xs font-medium">关闭</button>
+                    <button type="button" @click="saveBooking" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg text-xs font-medium">确定预约</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed, reactive } = Vue;
+
+        createApp({
+            setup() {
+                const currentView = ref('list');
+                const searchQuery = ref('');
+                const selectedCategory = ref('');
+                const selectedAccount = ref('');
+                const selectedContentType = ref('');
+                const selectedTimeTag = ref('');
+                const selectedStatus = ref('');
+                const sortOrder = ref('asc'); // asc, desc, rec
+                
+                const showModal = ref(false);
+                const isEditing = ref(false);
+                const editId = ref(null);
+
+                // 预约弹窗状态
+                const showBookingModal = ref(false);
+                const bookingTargetId = ref(null);
+                const bookingTargetName = ref('');
+                const bookingInputVal = ref('');
+
+                const categories = ['餐饮美食', '丽人美业', '休闲娱乐', '综合/其他', '酒吧微醺'];
+                const categoryColors = {
+                    '餐饮美食': '#f97316',
+                    '丽人美业': '#ec4899',
+                    '休闲娱乐': '#3b82f6',
+                    '综合/其他': '#6b7280',
+                    '酒吧微醺': '#8b5cf6'
+                };
+
+                const getCategoryColor = (cat) => categoryColors[cat] || '#6b7280';
+
+                // 修改：解析账号时只返回具体的账号名称，不输出“多人”标签
+                const parseAccount = (sourceStr) => {
+                    if (!sourceStr) return [];
+                    const accounts = ['少奶奶', '艳娘', '小十一'];
+                    return accounts.filter(acc => sourceStr.includes(acc));
+                };
+
+                const parseContentType = (sourceStr) => {
+                    if (!sourceStr) return ['笔记'];
+                    const types = ['笔记', '免费试', '免费菜', '其他'];
+                    const found = types.filter(t => sourceStr.includes(t));
+                    return found.length > 0 ? found : ['笔记'];
+                };
+
+                const STORAGE_KEY = 'wechat_activity_list_v10';
+                
+                // 最新更新的活动数据
+                const defaultActivities = [
+                    { id: 1, name: 'COPA', category: '综合/其他', content: '鸡翅+牛肉+薯条+2杯', notice: '报郭嘉杰+手机号', source: 'ShanghaiWOW 笔记', link: '', locationName: '上海', lnglat: [121.4737, 31.2304], deadline: '12/31', completed: false, bookingTime: '' },
+                    { id: 2, name: '老白家双人泉水锅', category: '餐饮美食', content: '5荤4素1甜1主', notice: '周六国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.48, 31.22], deadline: '11/8', completed: false, bookingTime: '' },
+                    { id: 3, name: 'Wine Bar & Bistro', category: '酒吧微醺', content: '2杯+小食 (打卡送蛋糕/小食)', notice: '周五不可 / 18-20不可', source: '艳娘 少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.46, 31.24], deadline: '10/25', completed: false, bookingTime: '' },
+                    { id: 4, name: '爱啤士', category: '酒吧微醺', content: '单人2斤', notice: '周六不可', source: '艳娘 少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.49, 31.21], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 5, name: 'AK Alin', category: '酒吧微醺', content: '1杯+小食 (6.30前送桌游)', notice: '', source: '艳娘 少奶奶 小十一 笔记', link: '', locationName: '上海', lnglat: [121.45, 31.23], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 6, name: 'Metic', category: '酒吧微醺', content: '酒水4瓶啤酒 (打卡薯条/1元啤酒)', notice: '', source: '少奶奶 小十一*2 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.25], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 7, name: '图灵电竞', category: '休闲娱乐', content: '3小时（2人包可用，咨询下）', notice: '周六国庆不可', source: '艳娘 笔记', link: 'https://m.dianping.com/shopshare/k1d69eTR3cJha1P8?msource=Appshare2021&utm_source=shop_share&shoptype=30&shopcategoryid=20042&isoversea=0&shareid=BDZHY9A5h1_1790667534', locationName: '上海', lnglat: [121.50, 31.22], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 8, name: '芒核 Homebar', category: '酒吧微醺', content: '单人畅饮', notice: '20点开门', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.44, 31.20], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 9, name: '星杆汇台球', category: '休闲娱乐', content: '2小时大厅（打卡2小时）', notice: '周六国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.43, 31.26], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 10, name: 'Royal Flush Club', category: '酒吧微醺', content: '1杯+小食（打卡送1杯）', notice: '周六国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.48, 31.20], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 11, name: '本来川菜', category: '餐饮美食', content: '2荤2素1米（打卡送饮料）', notice: '', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.46, 31.21], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 12, name: '瑾妍护肤', category: '丽人美业', content: '护肤60分钟', notice: '', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.22], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 13, name: 'phoenix', category: '酒吧微醺', content: '小食+1干红/白', notice: '周一国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.49, 31.24], deadline: '10/24', completed: false, bookingTime: '' },
+                    { id: 14, name: '御佳栖皮肤管理', category: '丽人美业', content: '皮肤管理体验', notice: '周六国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.42, 31.23], deadline: '10/18', completed: false, bookingTime: '' },
+                    { id: 15, name: '多多关照日料', category: '餐饮美食', content: '1锅+3小菜+1寿司+2饮品', notice: '周六国庆不可', source: '艳娘 少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.45, 31.25], deadline: '10/17', completed: false, bookingTime: '' },
+                    { id: 16, name: '有美客按摩', category: '丽人美业', content: '肩颈45分钟', notice: '国庆不可 / 18.30前可用', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.26], deadline: '10/17', completed: false, bookingTime: '' },
+                    { id: 17, name: '一念菩提茶馆', category: '休闲娱乐', content: '1人2小时（1壶茶）', notice: '周六国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.44, 31.22], deadline: '10/17', completed: false, bookingTime: '' },
+                    { id: 18, name: 'Malty Time 酒馆', category: '酒吧微醺', content: '1杯+花生米', notice: '', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.48, 31.25], deadline: '10/17', completed: false, bookingTime: '' },
+                    { id: 19, name: '温暖的家', category: '酒吧微醺', content: '1杯', notice: '中秋不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.46, 31.20], deadline: '10/17', completed: false, bookingTime: '' },
+                    { id: 20, name: '阿拉有牛', category: '餐饮美食', content: '特色牛肉料理', notice: '周六国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.50, 31.23], deadline: '10/16', completed: false, bookingTime: '' },
+                    { id: 21, name: '向东民谣火塘', category: '酒吧微醺', content: '民谣清吧体验', notice: '周六国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.43, 31.21], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 22, name: '当下', category: '酒吧微醺', content: '2杯酒水', notice: '周一不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.20], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 23, name: 'Night-night', category: '酒吧微醺', content: '2杯+小食', notice: '周六不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.49, 31.22], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 24, name: '乾一杯', category: '酒吧微醺', content: '单人1扎2小时', notice: '国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.45, 31.24], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 25, name: 'a place...', category: '酒吧微醺', content: '1杯+锅巴（打卡送下酒零食）', notice: '周一不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.44, 31.25], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 26, name: 'CHB coming home bar', category: '酒吧微醺', content: '88元套餐', notice: '周一/二/三/四不可', source: '艳娘 少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.48, 31.23], deadline: '10/10', completed: false, bookingTime: '' },
+                    { id: 27, name: '数鱼 PS5', category: '休闲娱乐', content: '2人大于90分钟', notice: '周六不可 / 其余时间只能约上午', source: '少奶奶 小十一 笔记', link: '', locationName: '上海', lnglat: [121.46, 31.26], deadline: '10/9', completed: false, bookingTime: '' },
+                    { id: 28, name: '集合石（瑞虹月亮湾）', category: '休闲娱乐', content: '单人体验', notice: '', source: '艳娘 笔记', link: '', locationName: '瑞虹月亮湾', lnglat: [121.51, 31.26], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 29, name: '幸福里 HOMEBAR', category: '酒吧微醺', content: '单人畅饮（18—30岁）', notice: '周五周六国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.43, 31.22], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 30, name: '酒精当铺', category: '酒吧微醺', content: '1杯+小食（单人20分钟）', notice: '周五国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.21], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 31, name: 'Fan9', category: '酒吧微醺', content: '双人鸡尾酒', notice: '周六国庆不可', source: '艳娘 笔记', link: '', locationName: '上海', lnglat: [121.49, 31.20], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 32, name: '单身GO烧烤Live酒馆', category: '餐饮美食', content: '烧烤+Live', notice: '', source: '艳娘 少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.45, 31.23], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 33, name: 'DS乐园', category: '休闲娱乐', content: '烧烤酒水套餐', notice: '', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.44, 31.24], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 34, name: 'Pigs Hombar', category: '酒吧微醺', content: '1杯+小食', notice: '国庆不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.48, 31.22], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 35, name: '模拟赛车手', category: '休闲娱乐', content: '赛车体验', notice: '周六不可', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.47, 31.25], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 36, name: '集合石（梅隆店）', category: '休闲娱乐', content: '单人体验', notice: '', source: '少奶奶 笔记', link: '', locationName: '梅隆店', lnglat: [121.52, 31.22], deadline: '10/3', completed: false, bookingTime: '' },
+                    { id: 37, name: '小胖眼镜太阳镜', category: '综合/其他', content: '太阳镜配镜/体验', notice: '6.50前可用', source: '少奶奶 笔记', link: '', locationName: '上海', lnglat: [121.46, 31.21], deadline: '10/2', completed: false, bookingTime: '' }
+                ];
+
+                const activities = ref(JSON.parse(localStorage.getItem(STORAGE_KEY)) || defaultActivities);
+
+                const saveToStorage = () => {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(activities.value));
+                };
+
+                const form = reactive({
+                    name: '',
+                    category: '酒吧微醺',
+                    deadline: '10/30',
+                    content: '',
+                    notice: '',
+                    source: '',
+                    link: '',
+                    locationName: '上海',
+                    lnglat: [121.47 + Math.random()*0.05, 31.23 + Math.random()*0.05]
+                });
+
+                const resetFilters = () => {
+                    searchQuery.value = '';
+                    selectedCategory.value = '';
+                    selectedAccount.value = '';
+                    selectedContentType.value = '';
+                    selectedTimeTag.value = '';
+                    selectedStatus.value = '';
+                };
+
+                const openAddModal = () => {
+                    isEditing.value = false;
+                    editId.value = null;
+                    form.name = '';
+                    form.category = '酒吧微醺';
+                    form.deadline = '10/30';
+                    form.content = '';
+                    form.notice = '';
+                    form.source = '';
+                    form.link = '';
+                    form.locationName = '上海';
+                    showModal.value = true;
+                };
+
+                const openEditModal = (item) => {
+                    isEditing.value = true;
+                    editId.value = item.id;
+                    form.name = item.name;
+                    form.category = item.category;
+                    form.deadline = item.deadline;
+                    form.content = item.content;
+                    form.notice = item.notice || '';
+                    form.source = item.source || '';
+                    form.link = item.link || '';
+                    form.locationName = item.locationName || '上海';
+                    showModal.value = true;
+                };
+
+                const openBookingModal = (item) => {
+                    bookingTargetId.value = item.id;
+                    bookingTargetName.value = item.name;
+                    bookingInputVal.value = item.bookingTime || '';
+                    showBookingModal.value = true;
+                };
+
+                const saveBooking = () => {
+                    const item = activities.value.find(i => i.id === bookingTargetId.value);
+                    if (item) {
+                        item.bookingTime = bookingInputVal.value.trim();
+                        saveToStorage();
+                    }
+                    showBookingModal.value = false;
+                };
+
+                const clearBooking = () => {
+                    const item = activities.value.find(i => i.id === bookingTargetId.value);
+                    if (item) {
+                        item.bookingTime = '';
+                        saveToStorage();
+                    }
+                    showBookingModal.value = false;
+                };
+
+                const saveActivity = () => {
+                    if (isEditing.value) {
+                        const index = activities.value.findIndex(i => i.id === editId.value);
+                        if (index !== -1) {
+                            activities.value[index] = {
+                                ...activities.value[index],
+                                ...form
+                            };
+                        }
+                    } else {
+                        activities.value.unshift({
+                            id: Date.now(),
+                            completed: false,
+                            bookingTime: '',
+                            ...form
+                        });
+                    }
+                    saveToStorage();
+                    showModal.value = false;
+                    if (currentView.value === 'map') initMap();
+                };
+
+                const deleteActivity = (id) => {
+                    if (confirm('确定要彻底删除这个活动吗？')) {
+                        activities.value = activities.value.filter(item => item.id !== id);
+                        saveToStorage();
+                        if (currentView.value === 'map') initMap();
+                    }
+                };
+
+                const toggleCompleted = (item) => {
+                    item.completed = !item.completed;
+                    saveToStorage();
+                };
+
+                // 严格智能判断活动在某日期是否可用（含复合限制的精准排除）
+                const checkTimeAvailability = (notice, tag) => {
+                    if (!notice) return true; 
+                    const n = notice;
+                    
+                    if (tag === '周六可用') {
+                        if (n.includes('周六不可') || n.includes('周末不可') || (n.includes('周六') && n.includes('不可'))) {
+                            return false;
+                        }
+                    }
+                    if (tag === '周日可用') {
+                        if (n.includes('周日不可') || n.includes('周末不可') || (n.includes('周日') && n.includes('不可'))) {
+                            return false;
+                        }
+                    }
+                    if (tag === '工作日可用') {
+                        if (n.includes('工作日不可') || n.includes('周一/二/三/四不可') || n.includes('周一不可') || n.includes('周五不可')) {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+
+                const sortedActivities = computed(() => {
+                    const filtered = activities.value.filter(item => {
+                        const q = searchQuery.value.toLowerCase();
+                        const matchesSearch = !q || item.name.toLowerCase().includes(q) || 
+                                              item.content.toLowerCase().includes(q) || 
+                                              (item.source && item.source.toLowerCase().includes(q));
+                        
+                        const matchesCat = !selectedCategory.value || item.category === selectedCategory.value;
+                        
+                        // “多人”筛选逻辑：如果选择“多人”，则检查来源中包含的账号数量是否大于1
+                        let matchesAcc = true;
+                        if (selectedAccount.value) {
+                            const accountsInItem = parseAccount(item.source);
+                            if (selectedAccount.value === '多人') {
+                                matchesAcc = accountsInItem.length > 1;
+                            } else {
+                                matchesAcc = accountsInItem.includes(selectedAccount.value);
+                            }
+                        }
+
+                        const matchesType = !selectedContentType.value || (item.source && item.source.includes(selectedContentType.value));
+                        
+                        const matchesTime = !selectedTimeTag.value || checkTimeAvailability(item.notice, selectedTimeTag.value);
+                        
+                        let matchesStatus = true;
+                        if (selectedStatus.value === 'completed') matchesStatus = item.completed;
+                        if (selectedStatus.value === 'uncompleted') matchesStatus = !item.completed;
+                        if (selectedStatus.value === 'booked') matchesStatus = !!item.bookingTime;
+
+                        return matchesSearch && matchesCat && matchesAcc && matchesType && matchesTime && matchesStatus;
+                    });
+
+                    return filtered.sort((a, b) => {
+                        if (a.completed !== b.completed) {
+                            return a.completed ? 1 : -1;
+                        }
+
+                        const parseDate = (dStr) => {
+                            if (!dStr) return 9999;
+                            const parts = dStr.split('/');
+                            if (parts.length === 2) {
+                                return parseInt(parts[0]) * 100 + parseInt(parts[1]);
+                            }
+                            return 9999;
+                        };
+
+                        if (sortOrder.value === 'rec') {
+                            const orderWeight = { '餐饮美食': 1, '丽人美业': 2, '休闲娱乐': 3, '综合/其他': 4, '酒吧微醺': 5 };
+                            const wA = orderWeight[a.category] || 99;
+                            const wB = orderWeight[b.category] || 99;
+                            if (wA !== wB) return wA - wB;
+                            return parseDate(a.deadline) - parseDate(b.deadline);
+                        }
+
+                        const valA = parseDate(a.deadline);
+                        const valB = parseDate(b.deadline);
+                        return sortOrder.value === 'asc' ? valA - valB : valB - valA;
+                    });
+                });
+
+                let mapInstance = null;
+                const initMap = () => {
+                    setTimeout(() => {
+                        if (!mapInstance && typeof AMap !== 'undefined') {
+                            mapInstance = new AMap.Map('amap-container', {
+                                zoom: 12,
+                                center: [121.4737, 31.2304]
+                            });
+                        }
+                        if (mapInstance) {
+                            mapInstance.clearMap();
+                            activities.value.forEach(item => {
+                                if (item.lnglat) {
+                                    const marker = new AMap.Marker({
+                                        position: item.lnglat,
+                                        title: item.name,
+                                        content: `<div style="background-color: ${getCategoryColor(item.category)}; width: 18px; height: 18px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3);"></div>`,
+                                        offset: new AMap.Pixel(-9, -9)
+                                    });
+                                    mapInstance.add(marker);
+                                }
+                            });
+                        }
+                    }, 100);
+                };
+
+                return {
+                    currentView,
+                    searchQuery,
+                    selectedCategory,
+                    selectedAccount,
+                    selectedContentType,
+                    selectedTimeTag,
+                    selectedStatus,
+                    sortOrder,
+                    categories,
+                    categoryColors,
+                    getCategoryColor,
+                    parseAccount,
+                    parseContentType,
+                    activities,
+                    sortedActivities,
+                    showModal,
+                    isEditing,
+                    form,
+                    showBookingModal,
+                    bookingTargetName,
+                    bookingInputVal,
+                    openBookingModal,
+                    saveBooking,
+                    clearBooking,
+                    resetFilters,
+                    openAddModal,
+                    openEditModal,
+                    saveActivity,
+                    deleteActivity,
+                    toggleCompleted,
+                    initMap
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
